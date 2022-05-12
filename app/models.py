@@ -375,6 +375,10 @@ class User(Base, ModelMixin, UserMixin, PasswordOracle):
         sa.Boolean, default=False, nullable=False, server_default="0"
     )
 
+    enable_SMTP_aliases = sa.Column(
+        sa.Boolean, default=False, nullable=False, server_default="0"
+    )
+
     referral_id = sa.Column(
         sa.ForeignKey("referral.id", ondelete="SET NULL"), nullable=True, default=None
     )
@@ -1279,6 +1283,11 @@ class Alias(Base, ModelMixin):
         TSVector(), sa.Computed("to_tsvector('english', note)", persisted=True)
     )
 
+    # Enable SMTP for alias
+    enable_SMTP = sa.Column(
+        sa.Boolean(), default=False, nullable=False, server_default="0"
+    )
+
     __table_args__ = (
         Index("ix_video___ts_vector__", ts_vector, postgresql_using="gin"),
         # index on note column using pg_trgm
@@ -1325,6 +1334,12 @@ class Alias(Base, ModelMixin):
 
     def pgp_enabled(self) -> bool:
         if self.mailbox_support_pgp() and not self.disable_pgp:
+            return True
+        return False
+
+    def SMTP_enabled(self) -> bool:
+        """return True is SMTP is enabled for the alias"""
+        if self.enable_SMTP:
             return True
         return False
 
@@ -1757,6 +1772,9 @@ class EmailLog(Base, ModelMixin):
 
     # whether this is a reply
     is_reply = sa.Column(sa.Boolean, nullable=False, default=False)
+
+    # whether this is sent from SMTP
+    is_SMTP = sa.Column(sa.Boolean, nullable=False, default=False)
 
     # for ex if alias is disabled, this forwarding is blocked
     blocked = sa.Column(sa.Boolean, nullable=False, default=False)
@@ -2528,6 +2546,41 @@ class AliasMailbox(Base, ModelMixin):
     )
 
     alias = orm.relationship(Alias)
+
+
+class SMTPCredentials(Base, ModelMixin, PasswordOracle):
+    __tablename__ = "SMTP_credentials"
+
+    alias_id = sa.Column(
+        sa.ForeignKey(Alias.id, ondelete="cascade"), unique=True, nullable=False, index=True
+    )
+
+    # override  PasswordOracle.password, SMTP password should not be null
+    password = sa.Column(sa.String(128), nullable=False)
+
+    alias = orm.relationship(Alias)
+
+    @classmethod
+    def create(cls, alias_id, password, **kwargs):
+        if password and len(password) == 21:  # This is default length for nanoid
+            smtp_cred: SMTPCredentials = super(SMTPCredentials, cls).create(
+                alias_id=alias_id, **kwargs
+            )
+            smtp_cred.set_password(password)
+        else:
+            return None
+        Session.flush()
+        return smtp_cred
+
+    @classmethod
+    def delete_by_alias_id(cls, alias_id, commit=False):
+        Session.query(cls).filter(cls.alias_id == alias_id).delete()
+
+        if commit:
+            Session.commit()
+
+    def __repr__(self):
+        return f"<SMTPCredentials {self.id}>"
 
 
 class AliasHibp(Base, ModelMixin):

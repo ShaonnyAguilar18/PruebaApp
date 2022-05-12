@@ -24,7 +24,7 @@ from app.email_utils import (
 )
 from app.errors import CannotCreateContactForReverseAlias
 from app.log import LOG
-from app.models import Alias, Contact, Mailbox, AliasMailbox
+from app.models import Alias, Contact, Mailbox, AliasMailbox, SMTPCredentials
 from app.utils import sanitize_email
 
 
@@ -255,6 +255,7 @@ def update_alias(alias_id):
         name (optional): in body
         mailbox_id (optional): in body
         disable_pgp (optional): in body
+        enable_SMTP & SMTP_password (optional): in body
     Output:
         200
     """
@@ -329,6 +330,25 @@ def update_alias(alias_id):
 
     if "pinned" in data:
         alias.pinned = data.get("pinned")
+        changed = True
+
+    if "enable_SMTP" in data:
+        enable_SMTP = data.get("enable_SMTP")
+        if enable_SMTP:
+            if "smtp_password" in data:
+                smtp_password = data.get("smtp_password")
+                if (
+                    smtp_password and len(smtp_password) != 21
+                ):  # 21 is default password length set for nanoid.
+                    return jsonify(error="Invalid SMTP Password Length"), 400
+                smtp_cred = SMTPCredentials.create(alias_id=alias.id, password=smtp_password)
+                if not smtp_cred:
+                    return jsonify(error="Error Saving SMTP Password"), 400
+            else:
+                return jsonify(error="SMTP password not supplied"), 400
+        else:
+            SMTPCredentials.delete_by_alias_id(alias_id=alias.id)
+        alias.enable_SMTP = enable_SMTP
         changed = True
 
     if changed:
